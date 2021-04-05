@@ -30,9 +30,9 @@
  **************************************************************************/
 
 // define the number of bytes you want to access
-//#define EEPROM_SIZE 128U
+#define EEPROM_SIZE 128U
 
-//#define I2CAddressESPWifi 6
+#define I2CAddressESPWifi 6
 
 #define  MaxStation  4
 #define  RUNPERDAY   5
@@ -52,6 +52,11 @@
 
 #define  WeeKNofDays   7
 
+#define Station1    1
+#define Station2    2
+#define Station3    3
+#define Station4    4
+
 #define First_Station     0
 #define Second_Station    1
 #define Third_Station     2
@@ -59,38 +64,30 @@
 
 #define OPEN        HIGH
 #define CLOSE       LOW
+#define ReDisplay   2
+#define Reset       0
 
-#define OpenStation1()    Wire.beginTransmission(I2CAddressESPWifi);\
-                          Wire.write(1);\
-                          Wire.endTransmission()
+#define TX_Expired    2000
 
-#define OpenStation2()    Wire.beginTransmission(I2CAddressESPWifi);\
-                          Wire.write(2);\
-                          Wire.endTransmission()
-
-#define OpenStation3()    Wire.beginTransmission(I2CAddressESPWifi);\
-                          Wire.write(3);\
-                          Wire.endTransmission()
-
-#define OpenStation4()    Wire.beginTransmission(I2CAddressESPWifi);\
-                          Wire.write(4);\
-                          Wire.endTransmission()
-
-#define CloseStation1()   Wire.beginTransmission(I2CAddressESPWifi);\
-                          Wire.write(11);\
-                          Wire.endTransmission()
-
-#define CloseStation2()   Wire.beginTransmission(I2CAddressESPWifi);\
-                          Wire.write(22);\
-                          Wire.endTransmission()
-
-#define CloseStation3()   Wire.beginTransmission(I2CAddressESPWifi);\
-                          Wire.write(33);\
-                          Wire.endTransmission()
-
-#define CloseStation4()   Wire.beginTransmission(I2CAddressESPWifi);\
-                          Wire.write(44);\
-                          Wire.endTransmission()
+//#define OpenStation(Station_Num)      TX_Wait=millis();\
+//                                      do{Wire.beginTransmission(I2CAddressESPWifi);\
+//                                      Wire.write(Station_Num);\
+//                                      Wire.endTransmission();\
+//                                      delay(30);\
+//                                      Wire.requestFrom(I2CAddressESPWifi,2);\
+//                                      while(Wire.available())\
+//                                      {FeedBack = Wire.read();}\
+//                                      }while( ( ((millis() ) - TX_Wait) < TX_Expired ) && !(FeedBack) )
+//
+//#define CloseStation(Station_Num)     TX_Wait=millis();\
+//                                      do{Wire.beginTransmission(I2CAddressESPWifi);\
+//                                      Wire.write(Station_Num);\
+//                                      Wire.endTransmission();\
+//                                      delay(30);\
+//                                      Wire.requestFrom(I2CAddressESPWifi,2);\
+//                                      while(Wire.available())\
+//                                      {FeedBack = Wire.read();}\
+//                                      }while( ( ((millis() ) - TX_Wait) < TX_Expired ) && !(FeedBack) )
 
 
 #define Exit            digitalRead(button3)
@@ -112,14 +109,10 @@ const int button1 = D7;  // button B1 is connected to NodeMCU D7
 const int button2 = D8;  // button B2 is connected to NodeMCU D8
 const int button3 = D9;  // button B3 is connected to NodeMCU D9 EXIT
 
+uint16_t TX_Wait = 0;     //Time waiting counter during I2C Tx in control station
+uint8_t FeedBack = 0;     //FeedBack from ATtiny During Executing control station
 
-byte i = 0;   //This variable is the step of edit taken in edit function
-
-uint8_t NumOfStation = 4;
-
-byte Flag = 0;
-
-byte x;
+byte i = 0;   //This variable is the cursor step of edit taken in edit function
 
 typedef struct
 {
@@ -131,17 +124,24 @@ typedef struct
   uint8_t RunTime4;
   uint8_t RunTime5;
   char    DOW_Run[7];
-} St_Data;
+}St_Data;
 
-St_Data St1, St2, St3, St4;
+St_Data ArrOfSt[4] ;
 
-St_Data ArrOfSt[] = {St1, St2, St3, St4};
+volatile uint8_t NumOfStation = 4;
+
+volatile uint8_t x= 0;
+
+uint8_t CurrentDay = 0;
 
 uint8_t RunTimeFlag[MaxStation][RUNPERDAY];
 
 uint8_t  DOW_Cntr = 0;
 
 uint8_t StDataAdressCtr = 0;
+
+uint8_t ArrStFlags[4];
+uint8_t BasicDisplayFlag[4];
 
 /*********************************** End of Global Variables *******************************/
 
@@ -165,6 +165,11 @@ void setup(void)
   pinMode(button2, INPUT);  //Increment
   pinMode(button3, INPUT);  //Exit
 
+  strcpy( ArrOfSt[0].DOW_Run , "ooooooo");
+  strcpy( ArrOfSt[1].DOW_Run , "ooooooo");
+  strcpy( ArrOfSt[2].DOW_Run , "ooooooo");
+  strcpy( ArrOfSt[3].DOW_Run , "ooooooo");
+
   // initialize the display
   display.begin();
 
@@ -182,10 +187,94 @@ void setup(void)
   Wire.begin(D6, D5);  // set I2C pins [SDA = D6, SCL = D5], default clock is 100kHz
   rtc.begin();         // initialize RTC chip
   
-  //EEPROM.begin(EEPROM_SIZE);
-  //GetCfgFromEEPROM();
+  EEPROM.begin(EEPROM_SIZE);
+  GetCfgFromEEPROM();
 }
 /********************************* END OF SETUP *************************************/
+
+
+  //////////////////////////////////////////////////////////////////
+ //              Saving Configuration Data in EEPROM             //
+//////////////////////////////////////////////////////////////////
+
+void SaveCfgToEEPROM(void)
+{
+  StDataAdressCtr = 0;
+
+    EEPROM.write( StDataAdressCtr , NumOfStation );
+    StDataAdressCtr++;
+  //Loop on Number of station Activated
+  for (uint8_t St_Ctr = 0 ; St_Ctr < NumOfStation ; St_Ctr++ )
+  { 
+    EEPROM.write( StDataAdressCtr , ArrOfSt[St_Ctr].StRunPeriod );
+    StDataAdressCtr++;
+    EEPROM.write( StDataAdressCtr , ArrOfSt[St_Ctr].NumOfRunPerDay);
+    StDataAdressCtr++;
+    EEPROM.write( StDataAdressCtr , ArrOfSt[St_Ctr].RunTime1);
+    StDataAdressCtr++;
+    EEPROM.write( StDataAdressCtr , ArrOfSt[St_Ctr].RunTime2);
+    StDataAdressCtr++;
+    EEPROM.write( StDataAdressCtr , ArrOfSt[St_Ctr].RunTime3);
+    StDataAdressCtr++;
+    EEPROM.write( StDataAdressCtr , ArrOfSt[St_Ctr].RunTime4);
+    StDataAdressCtr++;
+    EEPROM.write( StDataAdressCtr , ArrOfSt[St_Ctr].RunTime5);
+    StDataAdressCtr++;
+
+    for (uint8_t DOW_Ctr = 0 ; DOW_Ctr < 7 ; DOW_Ctr++ )
+    {
+      EEPROM.write( StDataAdressCtr , ArrOfSt[St_Ctr].DOW_Run[DOW_Ctr]);
+      StDataAdressCtr++;
+    }//DOW Ctr For END
+  }//Stations Ctr For END
+  //Save Data t EEPROM
+  EEPROM.commit();
+  //Reset Address Ctr
+  //StDataAdressCtr = 0;
+}//SaveCfgToEEPROM Fun END
+
+  ////////////////////////////////////////////////////////////////////
+ //                  Read Configuration from EEPROM                //
+////////////////////////////////////////////////////////////////////
+void GetCfgFromEEPROM(void)
+{
+  StDataAdressCtr = 0;
+
+   NumOfStation  = EEPROM.read(StDataAdressCtr);
+   StDataAdressCtr++;
+  //Loop on Number of station Activated
+  for (uint8_t St_Ctr = 0 ; St_Ctr < NumOfStation ; St_Ctr++ )
+  {
+    ArrOfSt[St_Ctr].StRunPeriod  = EEPROM.read(StDataAdressCtr);
+    StDataAdressCtr++;
+    ArrOfSt[St_Ctr].NumOfRunPerDay  = EEPROM.read( StDataAdressCtr );
+    StDataAdressCtr++;
+    ArrOfSt[St_Ctr].RunTime1 = EEPROM.read( StDataAdressCtr );
+    StDataAdressCtr++;
+    ArrOfSt[St_Ctr].RunTime2 = EEPROM.read( StDataAdressCtr );
+    StDataAdressCtr++;
+    ArrOfSt[St_Ctr].RunTime3 = EEPROM.read( StDataAdressCtr );
+    StDataAdressCtr++;
+    ArrOfSt[St_Ctr].RunTime4 = EEPROM.read( StDataAdressCtr );
+    StDataAdressCtr++;
+    ArrOfSt[St_Ctr].RunTime5 = EEPROM.read( StDataAdressCtr );
+    StDataAdressCtr++;
+
+    for (uint8_t DOW_Ctr = 0 ; DOW_Ctr < 7 ; DOW_Ctr++ )
+    {
+      ArrOfSt[St_Ctr].DOW_Run[DOW_Ctr] = EEPROM.read( StDataAdressCtr );
+      StDataAdressCtr++;
+    }//DOW Ctr For END
+  }
+  //Reset Address
+  //StDataAdressCtr = 0;
+
+}
+
+  ///////////////////////////////////////////////////////////////////////
+ //                  Read Configuration from EEPROM END               //
+///////////////////////////////////////////////////////////////////////
+
 
 // a small function for button1 (B1) debounce
 bool debounce2()
@@ -236,11 +325,7 @@ void Basic_Display()
 
   for (uint8_t StCount = 0; StCount < MaxStation; StCount++)
   {
-    for (uint8_t RTCount = 0 ; RTCount < RUNPERDAY; RTCount++ )
-    {
-      RunTimeFlag [StCount][RTCount] = 0; //Reset Run Times flag in order to redisplay
-    }
-
+      BasicDisplayFlag[StCount] = ReDisplay; //Reset Run Times flag in order to redisplay
   }
 }
 /************************** END of Basic Display Function ************************/
@@ -460,7 +545,7 @@ byte DOW_edit(byte Parameter)
 //////////////////////////////////////////////////////////////////
 //             Days of week Parameters Display                  //
 //////////////////////////////////////////////////////////////////
-void DOW_valDisplay(char  *Parameter)
+void DOW_valDisplay(char  Parameter)
 {
   static byte X_dowPos[2] = {42, 0} , Y_dowPos[4] = {0, 8, 16, 24};
   static byte x_axis = 1, y_axis = 0 ;
@@ -472,7 +557,7 @@ void DOW_valDisplay(char  *Parameter)
   }
 
   display.setCursor(X_dowPos[x_axis], Y_dowPos[y_axis]);
-  display.printf("%c", *Parameter);
+  display.printf("%c", Parameter);
   display.display();  // update the screen
 
   x_axis = (x_axis + 1) % 2;        //Transfer to the next Lateral place the next day
@@ -558,95 +643,200 @@ byte edit(byte parameter)
 /*********************************** END OF EDIT FUNCTION ***********************************/
 
 /*******************************************************************************************
+                  Open_Station
+********************************************************************************************
+  INPUT: Station Number
+*******************************************************************************************/
+void OpenStation(uint8_t StationNum)
+{
+  TX_Wait=millis();
+  
+  do{
+      Wire.beginTransmission(I2CAddressESPWifi);
+      Wire.write(StationNum);
+      Wire.endTransmission();
+      delay(200);
+      Wire.requestFrom(I2CAddressESPWifi,1);
+      while(Wire.available())
+      {
+        FeedBack = Wire.read();
+      }
+  }while( ( ((millis() ) - TX_Wait) < TX_Expired ) && !(FeedBack) );
+  
+}
+/*******************************************************************
+ *                Close station
+ *******************************************************************
+ *Input: station Number
+ ***************************************************************/
+void CloseStation(uint8_t StationNum)
+{
+    StationNum = StationNum + 4 ;
+    
+    TX_Wait=millis();
+    
+    do{
+        Wire.beginTransmission(I2CAddressESPWifi);
+        Wire.write(StationNum);
+        Wire.endTransmission();
+        delay(200);
+        Wire.requestFrom(I2CAddressESPWifi,1);
+        while(Wire.available())
+        {
+          FeedBack = Wire.read();
+        }
+      }while( ( ((millis() ) - TX_Wait) < TX_Expired ) && !(FeedBack) );
+}
+
+/*******************************************************************************************
                   Control_Station
 ********************************************************************************************
   INPUT: Station Number
 
-
 *******************************************************************************************/
-void Control_Station(uint8_t Station, uint8_t Status)
+uint8_t Control_Station(uint8_t Station, uint8_t Status)
 {
   switch (Station)
   {
     case First_Station:
 
       if (Status == OPEN)
-      {
-        //OpenStation1(); //open Desired station valve
-        display.setCursor(0, 24);
-        display.print("St. 1" );
-        display.display();  // update the screen
+      {        
+          OpenStation(Station1); //open Desired station valve Function
+          if(FeedBack == 1)
+          {
+            display.setCursor(0, 24);
+            display.print("S.1" );
+            
+            display.setCursor(0, 40);
+            display.printf("%d", FeedBack);
+            
+            display.display();  // update the screen
+          }
       }
-      else
+      else if(Status == CLOSE)
       {
-        //CloseStation1(); //Close Desired station valve
-        display.fillRect(0, 24, 42, 8, WHITE);     // draw rectangle (erase day from the display)
-        display.display();  // update the screen
+        CloseStation(Station1); //Close Desired station valve Function
+        if(FeedBack == 1)
+        {
+          display.fillRect(0, 24, 42, 8, WHITE);     // draw rectangle (erase day from the display)
+
+          display.setCursor(10, 40);
+          display.printf("%d", FeedBack);
+          
+          display.display();  // update the screen
+        }
       }
 
       break;
 
     case Second_Station:
 
-      if (Status == OPEN)
+      if(Status == OPEN)
       {
-        //OpenStation2(); //open Desired station valve
-        display.setCursor(43, 24);
-        display.print("St. 2 ");
-        display.display();  // update the screen
+        OpenStation(Station2); //open Desired station valve Function
+        if(FeedBack == 1)
+        {
+          display.setCursor(43, 24);
+          display.print("S.2 ");
+
+          display.setCursor(20, 40);
+          display.printf("%d", FeedBack);
+          
+          display.display();  // update the screen
+        }
       }
-      else
+      else if(Status == CLOSE)
       {
-        //CloseStation2(); //Close Desired station valve
-        display.fillRect(43, 24, 42, 8, WHITE);     // draw rectangle (erase day from the display)
-        display.display();  // update the screen
+        CloseStation(Station2); //Close Desired station valve Function
+        if(FeedBack == 1)
+        {
+          display.fillRect(43, 24, 42, 8, WHITE);     // draw rectangle (erase day from the display)
+
+          display.setCursor(30, 40);
+          display.printf("%d", FeedBack);
+            
+          display.display();  // update the screen
+        }
       }
       break;
 
     case Third_Station:
 
-      if (Status == OPEN)
+      if(Status == OPEN)
       {
-        //OpenStation3(); //open Desired station valve
-        display.setCursor(0, 32 );
-        display.print("St. 3" );
-        display.display();  // update the screen
+        OpenStation(Station3); //open Desired station valve MACRO Function
+        if(FeedBack == 1)
+        {
+          display.setCursor(0, 32 );
+          display.print("S.3" );
+
+          display.setCursor(40, 40);
+          display.printf("%d", FeedBack);
+            
+          display.display();  // update the screen
+        }
       }
-      else
+      else if(Status == CLOSE)
       {
-        //CloseStation3(); //Close Desired station valve
-        display.fillRect(0, 32, 42, 8, WHITE);     // draw rectangle (erase day from the display)
-        display.display();  // update the screen
+        CloseStation(Station3); //Close Desired station valve MACRO Function
+        if(FeedBack == 1)
+        {
+          display.fillRect(0, 32, 42, 8, WHITE);     // draw rectangle (erase day from the display)
+
+          display.setCursor(50, 40);
+          display.printf("%d", FeedBack);
+            
+          display.display();  // update the screen
+        }
       }
       break;
 
     case Fourth_Station:
 
-      if (Status == OPEN)
+      if(Status == OPEN)
       {
-        //OpenStation4(); //open Desired station valve
-        display.setCursor(43, 32);
-        display.print("St. 4");
-        display.display();  // update the screen
+        OpenStation(Station4); //open Desired station valve MACRO Function
+        if(FeedBack == 1)
+        {
+          display.setCursor(43, 32);
+          display.print("S.4");
+
+          display.setCursor(60, 40);
+          display.printf("%d", FeedBack);
+            
+          display.display();  // update the screen
+        }
       }
-      else
+      else if(Status == CLOSE)
       {
-        //CloseStation4(); //Close Desired station valve
-        display.fillRect(43, 32, 42, 8, WHITE);     // draw rectangle (erase day from the display)
-        display.display();  // update the screen
+        CloseStation(Station4); //Close Desired station valve MACRO Function
+        if(FeedBack == 1)
+        {
+          display.fillRect(43, 32, 42, 8, WHITE);     // draw rectangle (erase day from the display)
+
+          display.setCursor(70, 40);
+          display.printf("%d", FeedBack);
+            
+          display.display();  // update the screen
+        }
       }
       break;
   }
-}
-  //////////////////////////////////////////
- //              Main loop               //
-//////////////////////////////////////////
+
+  return FeedBack;
+}//Control Station Fun END
+    /////////////////////////////////////////////////////////////////////////////////////////
+   //                                                                                     //
+  //                                      Main loop                                      //
+ //                                                                                     //
+/////////////////////////////////////////////////////////////////////////////////////////
 void loop()
 {
 
   //////////////////////////////////////////////////////////////////////////////////
-  //             Configuration Edit Part                                          //
-  //////////////////////////////////////////////////////////////////////////////////
+ //             Configuration Edit Part                                          //
+//////////////////////////////////////////////////////////////////////////////////
 
   if ( digitalRead(button1) ) // if B1 is pressed (EDIT)
   {
@@ -667,29 +857,31 @@ void loop()
       NumOfStation = edit( NumOfStation );
 
       //Loop on station data
-      for ( x = 0 ; x < NumOfStation ; x++)
+      for (uint8_t stCntr = 0 ; stCntr < NumOfStation ; stCntr++)
       {
+        x = stCntr;
+        
         if (Exit)
           break;
 
-        ArrOfSt[x].StRunPeriod = edit(ArrOfSt[x].StRunPeriod);
-        ArrOfSt[x].NumOfRunPerDay = edit(ArrOfSt[x].NumOfRunPerDay);
+        ArrOfSt[stCntr].StRunPeriod = edit(ArrOfSt[stCntr].StRunPeriod);
+        ArrOfSt[stCntr].NumOfRunPerDay = edit(ArrOfSt[stCntr].NumOfRunPerDay);
         //Loop on period start times
-        for (uint8_t j = 0 ; j < ArrOfSt[x].NumOfRunPerDay ; j++)
+        for (uint8_t j = 0 ; j < ArrOfSt[stCntr].NumOfRunPerDay ; j++)
         {
           if (Exit)
             break;
 
           if (j == 0)
-            ArrOfSt[x].RunTime1 = edit(ArrOfSt[x].RunTime1);
+            ArrOfSt[stCntr].RunTime1 = edit(ArrOfSt[stCntr].RunTime1);
           else if (j == 1)
-            ArrOfSt[x].RunTime2 = edit(ArrOfSt[x].RunTime2);
+            ArrOfSt[stCntr].RunTime2 = edit(ArrOfSt[stCntr].RunTime2);
           else if (j == 2)
-            ArrOfSt[x].RunTime3 = edit(ArrOfSt[x].RunTime3);
+            ArrOfSt[stCntr].RunTime3 = edit(ArrOfSt[stCntr].RunTime3);
           else if (j == 3)
-            ArrOfSt[x].RunTime4 = edit(ArrOfSt[x].RunTime4);
+            ArrOfSt[stCntr].RunTime4 = edit(ArrOfSt[stCntr].RunTime4);
           else if (j == 4)
-            ArrOfSt[x].RunTime5 = edit(ArrOfSt[x].RunTime5);
+            ArrOfSt[stCntr].RunTime5 = edit(ArrOfSt[stCntr].RunTime5);
         }//Run Times Loop
         
         i = 6;  //back to station period step
@@ -699,21 +891,11 @@ void loop()
         /*Call the next page which is DOW_To_Run Select*/
         Config_Display(DOW_Display);
 
-        if (Flag == 0 ) //First Run of program Reset all Run Times selections
-        {
-          strcpy( ArrOfSt[0].DOW_Run , "ooooooo");
-          strcpy( ArrOfSt[1].DOW_Run , "ooooooo");
-          strcpy( ArrOfSt[2].DOW_Run , "ooooooo");
-          strcpy( ArrOfSt[3].DOW_Run , "ooooooo");
-
-          Flag = 1;  // Set the flag of the initial values of days of Run after the loop of stations
-        }
-
         /* Display firstly values of Days of weeks selections*/
-        for (uint8_t n = 0 ; n < WeeKNofDays ; n++)
+        for (uint8_t dayNum = 0 ; dayNum < WeeKNofDays ; dayNum++)
         {
 
-          DOW_valDisplay(&ArrOfSt[x].DOW_Run[n]);
+          DOW_valDisplay(ArrOfSt[stCntr].DOW_Run[dayNum]);
 
           if (Exit)   //any time exit button pressed break from the loop
           {
@@ -722,16 +904,16 @@ void loop()
           }    // break from the loop
 
         }
-        for (uint8_t n = 0 ; n < WeeKNofDays ; n++)
+        for (uint8_t dayNum = 0 ; dayNum < WeeKNofDays ; dayNum++)
         {
-          ArrOfSt[x].DOW_Run[n] = DOW_edit(ArrOfSt[x].DOW_Run[n]);
+          ArrOfSt[stCntr].DOW_Run[dayNum] = DOW_edit(ArrOfSt[stCntr].DOW_Run[dayNum]);
 
           if (Exit)
           {
             DOW_Cntr = 0; //Reset Counter
             break;
           }
-        }
+        }//Day Num Loop
       }//End For loop NumOfStation
 
       while (debounce()); // call debounce function (wait for button B1 to be released)
@@ -739,8 +921,7 @@ void loop()
       i = 0;      // Reset i to return display cursor to position {0,0}
 
       Basic_Display();
-
-      //SaveCfgToEEPROM();
+      SaveCfgToEEPROM();
 
     }//End of EDIT
 
@@ -756,16 +937,6 @@ void loop()
   RTC_display();   // display time & calendar
   delay(100);      // wait 100 ms
 
-//  display.setCursor(0, 34 );
-//  display.print("St. 3" );
-//  display.display();  // update the screen
-//
-//  display.setCursor(43, 34 );
-//  display.print("St. 4" );
-//  display.display();  // update the screen
-
-
-
 
   /********************************************************************************************
                     Apply Configuration Part
@@ -776,94 +947,169 @@ void loop()
      in each day check Run Times per day
      open each station according to Time of Run
   */
-
- 
+  
   //Loop on Number of Station
   for ( uint8_t St_Num = 0 ; St_Num < NumOfStation ; St_Num++)
-  {
-      /* check This Day is wtering Day */
-    if ( (ArrOfSt[St_Num].DOW_Run[now.day()]) == _Asterix)
-    {
-      display.setCursor(43, 40);
-      display.printf("%02u", NumOfStation );
-      display.display();  // update the screen
-    
-      display.setCursor(0, 40);
-      display.printf("%02u", St_Num);
-      display.display();  // update the screen
-
-      delay(1000);
-
-      
-      /* Therefore this is the day of watering to this station */
-      /* Next question when we Run is how many times per day */
-
+  {      
+      /* for this station for each run time entered by user check:
+          This Day is watering Day and period*/     
+          
       //Loop on Number of run per day to this station
       for (uint8_t RunTnum = 0 ; RunTnum < ArrOfSt[St_Num].NumOfRunPerDay ; RunTnum++)
       {
         if (RunTnum == 0)
         {
-          if ( ((now.hour()) == ArrOfSt[St_Num].RunTime1) && ( (now.minute()) < ArrOfSt[St_Num].StRunPeriod) )
-          { //This is the Time to open the required station
-            Control_Station(St_Num, OPEN);  //Open it
+          if( ((now.hour()) == (ArrOfSt[St_Num].RunTime1) ) && ( (now.minute()) < ArrOfSt[St_Num].StRunPeriod) &&
+              ( ( ArrOfSt[St_Num].DOW_Run[now.dayOfTheWeek()] )  == _Asterix  ) )//if it is watering time
+          { //This is the Time to open the required station but is it already opened
+            if( (ArrStFlags[St_Num] == CLOSE) || (BasicDisplayFlag[St_Num] == ReDisplay) )
+            {//if not opened 
+              FeedBack = Control_Station(St_Num, OPEN);  //Open it              
+              if(FeedBack == 1)//if not zero that mean action confirmed
+              {//Raise the flag to the desired station to indicate that it is opened in the future
+                ArrStFlags[St_Num] = OPEN;
+                FeedBack = Reset;
+              }
+            }
           }
           else
-          {
-            Control_Station(St_Num, CLOSE); //Close Station
-          }
-        }
+          {//if not watering time therefore close the valve
+            //if it is opened not closed before
+            if( ( ArrStFlags[St_Num] == OPEN ) || (BasicDisplayFlag[St_Num] == ReDisplay) )
+            {
+              FeedBack = Control_Station(St_Num, CLOSE); //Close Station
+              if(FeedBack == 1)
+              {//Lower the flag to the desired station to indicate that it is Closed in the future
+                ArrStFlags[St_Num] = CLOSE;
+                FeedBack = Reset;
+              }//feedback if
+            }//Flag if
+          }//else if not watering time
+        }//if RunTnum 0
 
         else if (RunTnum == 1)
         {
-          if ( ((now.hour()) == ArrOfSt[St_Num].RunTime2) && ( (now.minute()) < ArrOfSt[St_Num].StRunPeriod )  )
-          { //This is the Time to open the required station
-            Control_Station(St_Num, OPEN);  //Open it
+          if( ((now.hour()) == (ArrOfSt[St_Num].RunTime2) ) && ( (now.minute()) < ArrOfSt[St_Num].StRunPeriod ) && 
+              ( ( ArrOfSt[St_Num].DOW_Run[now.dayOfTheWeek()] )  == _Asterix  ))
+          { //This is the Time to open the required station but is it already opened
+            if( (ArrStFlags[St_Num] == CLOSE) || (BasicDisplayFlag[St_Num] == ReDisplay) )
+            {
+              FeedBack = Control_Station(St_Num, OPEN);  //Open it
+              if(FeedBack == 1)
+              {//Raise the flag to the desired station to indicate that it is opened in the future
+                ArrStFlags[St_Num] = OPEN;
+                FeedBack = Reset;
+              }
+            }
           }
           else 
           {
-            Control_Station(St_Num, CLOSE); //Close Station
+            //if it is opened
+            if( ( ArrStFlags[St_Num] == OPEN ) || (BasicDisplayFlag[St_Num] == ReDisplay) )
+            {
+              FeedBack = Control_Station(St_Num, CLOSE); //Close Station
+              if(FeedBack == 1)
+              {//Lower the flag to the desired station to indicate that it is Closed in the future
+                ArrStFlags[St_Num] = CLOSE;
+                FeedBack = Reset;
+              }
+            }
           }
         }
 
 
         else if (RunTnum == 2)
         {
-          if ( ((now.hour()) == ArrOfSt[St_Num].RunTime3) && ( (now.minute()) < ArrOfSt[St_Num].StRunPeriod )  )
-          {
-            Control_Station(St_Num, OPEN);  //Open it
+          if ( ((now.hour()) == (ArrOfSt[St_Num].RunTime3) ) && ( (now.minute()) < ArrOfSt[St_Num].StRunPeriod ) &&
+              ( ( ArrOfSt[St_Num].DOW_Run[now.dayOfTheWeek()] )  == _Asterix  ))
+          {//This is the Time to open the required station but is it already opened
+            if( (ArrStFlags[St_Num] == CLOSE) || (BasicDisplayFlag[St_Num] == ReDisplay) )
+            {
+              FeedBack = Control_Station(St_Num, OPEN);  //Open it
+              if(FeedBack == 1)
+              {//Raise the flag to the desired station to indicate that it is opened in the future
+                ArrStFlags[St_Num] = OPEN;
+                FeedBack = Reset;
+              }
+            }
           }
           else 
           { 
-            Control_Station(St_Num, CLOSE); //Close Station
+            //if it is opened
+            if( ( ArrStFlags[St_Num] == OPEN ) || (BasicDisplayFlag[St_Num] == ReDisplay) )
+            {
+              FeedBack = Control_Station(St_Num, CLOSE); //Close Station
+              if(FeedBack == 1)
+              {//Lower the flag to the desired station to indicate that it is Closed in the future
+                ArrStFlags[St_Num] = CLOSE;
+                FeedBack = Reset;
+              }
+            }
           }
         }
 
 
         else if (RunTnum == 3)
         {
-          if ( ((now.hour()) == ArrOfSt[St_Num].RunTime4) && ( (now.minute()) < ArrOfSt[St_Num].StRunPeriod )  )
-          { //This is the Time to open the required station
-            Control_Station(St_Num, OPEN);  //Open it
+          if ( ((now.hour()) == (ArrOfSt[St_Num].RunTime4) ) && ( (now.minute()) < ArrOfSt[St_Num].StRunPeriod ) &&
+              ( ( ArrOfSt[St_Num].DOW_Run[now.dayOfTheWeek()] )  == _Asterix  ))
+          { //This is the Time to open the required station but is it already opened
+            if( (ArrStFlags[St_Num] == CLOSE) || (BasicDisplayFlag[St_Num] == ReDisplay) )
+            {
+              Control_Station(St_Num, OPEN);  //Open it
+              if(FeedBack == 1)
+              {//Raise the flag to the desired station to indicate that it is opened in the future
+                ArrStFlags[St_Num] = OPEN;
+                FeedBack = Reset;
+              }
+            }
           }
           else
-          { 
-            Control_Station(St_Num, CLOSE); //Close Station
+          {
+            //if it is opened
+            if( ( ArrStFlags[St_Num] == OPEN ) || (BasicDisplayFlag[St_Num] == ReDisplay) )
+            { 
+              FeedBack = Control_Station(St_Num, CLOSE); //Close Station
+              if(FeedBack == 1)
+              {//Lower the flag to the desired station to indicate that it is Closed in the future
+                ArrStFlags[St_Num] = CLOSE;
+                FeedBack = Reset;
+              }
+            }
           }
         }
 
         else if (RunTnum == 4)
         {
-          if ( ((now.hour()) == ArrOfSt[St_Num].RunTime5) && ( (now.minute()) < ArrOfSt[St_Num].StRunPeriod )  )
-          { //This is the Time to open the required station
-            Control_Station(St_Num, OPEN);  //Open it
+          if ( ((now.hour()) == (ArrOfSt[St_Num].RunTime5) ) && ( (now.minute()) < ArrOfSt[St_Num].StRunPeriod ) && 
+              ( ( ArrOfSt[St_Num].DOW_Run[now.dayOfTheWeek()] )  == _Asterix  ))
+          { //This is the Time to open the required station but is it already opened
+            if( (ArrStFlags[St_Num] == CLOSE) || (BasicDisplayFlag[St_Num] == ReDisplay) )
+            {
+              FeedBack = Control_Station(St_Num, OPEN);  //Open it
+              if(FeedBack == 1)
+              {//Raise the flag to the desired station to indicate that it is opened in the future
+                ArrStFlags[St_Num] = OPEN;
+                FeedBack = Reset;
+              }
+            }
           }
           else
           {
-            Control_Station(St_Num, CLOSE); //Close Station
+            //if it is opened
+            if( ( ArrStFlags[St_Num] == OPEN ) || (BasicDisplayFlag[St_Num] == ReDisplay) )
+            {
+              FeedBack = Control_Station(St_Num, CLOSE); //Close Station
+              if(FeedBack == 1)
+              {//Lower the flag to the desired station to indicate that it is Closed in the future
+                ArrStFlags[St_Num] = CLOSE;
+                FeedBack = Reset;
+              }
+            }
           }
         }
+        
       }//For loop on Run Times of each station
-    }//If Day of Run
   }//For loop on station
   
 
