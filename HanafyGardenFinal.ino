@@ -89,6 +89,14 @@
 #define IncrB2PRESSED     digitalRead(button2)
 #define Exit              digitalRead(button3)
 
+#define ThisIsDay_Period  ((ArrOfSt[St_Num].DOW_Run[Now.dayOfTheWeek()])==_Asterix )&&((Now.minute())< ArrOfSt[St_Num].StRunPeriod)
+
+#define ThisIsRunTime    ((Now.hour())==(ArrOfSt[St_Num].RunTime[RunTnum]))
+
+/*******************************************************************************************************************
+  ( ( ArrOfSt[St_Num].DOW_Run[Now.dayOfTheWeek()] ) == _Asterix ) &&
+           ((Now.hour()) == (ArrOfSt[St_Num].RunTime[RunTnum])) && ( (Now.minute()) < ArrOfSt[St_Num].StRunPeriod)
+********************************************************************************************************************/
 /****************************************************************************
                                   GLOBAL Varaiables
  ****************************************************************************/
@@ -132,11 +140,10 @@ uint8_t BlynkFlag = LOW;
 
 uint8_t StDataAdressCtr = 0;
 
-uint8_t ArrStFlags[MaxStation];
+uint8_t NowStStatus[MaxStation];
 
-uint8_t ArrRtimesFlag[MaxStation][RUNPERDAY];
-
-uint8_t BasicDisplayFlag[4];
+uint8_t CurrentStStatus[MaxStation] = {CLOSE, CLOSE, CLOSE, CLOSE}; //deafault initial condition
+uint8_t PrevStStatus[MaxStation] = {ReDisplay, ReDisplay, ReDisplay, ReDisplay}; //initially only
 
 /*****************************************************/
 
@@ -554,7 +561,9 @@ void Basic_Display()
 
   for (uint8_t StCount = 0; StCount < MaxStation; StCount++)
   {
-    BasicDisplayFlag[StCount] = ReDisplay; //Reset Run Times flag in order to redisplay
+    //Close all station to return to default status
+    CloseStation(StCount);
+    CurrentStStatus[StCount] = PrevStStatus[StCount] = CLOSE; //Reset Run Times flag in order to redisplay
   }
 
   delay(100);
@@ -1206,7 +1215,7 @@ void setup(void)
   // Debug console
   //Serial.begin(9600);
 
-  delay(2000u);
+  delay(2000u);//delay for connection Trial
 
   //continue trying to connect to Blynk server. Returns true when connected,
   //false if timeout have been reached. Default timeout is 30 seconds.
@@ -1339,8 +1348,6 @@ void loop()
   /////////////////////////////////////// Display Time /////////////////////////////////////////////////////
   Now = rtc.now();  // read current time and date from the RTC chip
 
-
-
   RTC_display();   // display time & calendar
   delay(100);      // wait 100 ms
 
@@ -1354,47 +1361,51 @@ void loop()
 
   /********************************************************************************************
                       Apply Configuration Part
-     ********************************************************************************************
-       Read Days of week to Run in each station
-       check how many station
-       check watering days of each station
-       in each day check Run Times per day
-       open each station according to Time of Run
-  */
+  *********************************************************************************************
+      Read Days of week to Run in each station
+      check how many station
+      check watering days of each station
+      in each day check Run Times per day
+      open each station according to Time of Run
+  *********************************************************************************************/
 
   /* Loop on Number of Station */
   for ( uint8_t St_Num = 0 ; St_Num < NumOfStation ; St_Num++)
-  { /* Loop on Number of run per day to this station */
-    for (uint8_t RunTnum = 0 ; RunTnum < ArrOfSt[St_Num].NumOfRunPerDay ; RunTnum++)
-    { /* check, is this the day of running, is this the start hour and is we still within Run period  */
-      if ( ( ( ArrOfSt[St_Num].DOW_Run[Now.dayOfTheWeek()] ) == _Asterix ) &&
-           ((Now.hour()) == (ArrOfSt[St_Num].RunTime[RunTnum])) && ( (Now.minute()) < ArrOfSt[St_Num].StRunPeriod))
-      { //This is the Time to open the required station but is it already opened?
-        if ( (ArrRtimesFlag[St_Num][RunTnum] == CLOSE) || (BasicDisplayFlag[St_Num] == ReDisplay) )
-        { //if not opened
-          FeedBack = Control_Station(St_Num, OPEN);  //Open it
-          if (FeedBack == 1) //if not zero that mean action confirmed
-          { //Raise the flag to the desired station to indicate that it is opened in the future
-            ArrRtimesFlag[St_Num][RunTnum] = OPEN;
-            BasicDisplayFlag[St_Num] = HIGH;
-            FeedBack = Reset;
-          }
+  {
+    CurrentStStatus[St_Num] = CLOSE;
+
+    if (ThisIsDay_Period)
+    { /* Loop on Number of run per day to this station */
+      for (uint8_t RunTnum = 0 ; RunTnum < ArrOfSt[St_Num].NumOfRunPerDay ; RunTnum++)
+      {
+        /* if any Run Time reach open time therefore this station will be opened */
+        if (ThisIsRunTime)
+        {
+          CurrentStStatus[St_Num] = OPEN;
         }
       }
-      else
-      { //if not watering time therefore close the valve
-        //if it is opened not closed before
-        if ( ( ArrRtimesFlag[St_Num][RunTnum] == OPEN ) || (BasicDisplayFlag[St_Num] == ReDisplay) )
+    }
+
+    if ( CurrentStStatus[St_Num] != PrevStStatus[St_Num] )
+    {
+      if (CurrentStStatus[St_Num] == OPEN)
+      {
+        FeedBack = Control_Station(St_Num, OPEN);  //Open Current station
+        if (FeedBack == 1)
         {
-          FeedBack = Control_Station(St_Num, CLOSE); //Close Station
-          if (FeedBack == 1)
-          { //Lower the flag to the desired station to indicate that it is Closed in the future
-            ArrRtimesFlag[St_Num][RunTnum] = CLOSE;
-            BasicDisplayFlag[St_Num] = HIGH;
-            FeedBack = Reset;
-          }//feedback if
-        }//Flag if
-      }//else if not watering time
-    }//For loop on Run Times of each station
+          PrevStStatus[St_Num] = CurrentStStatus[St_Num];
+          FeedBack = Reset;
+        }
+      }
+      else if (CurrentStStatus[St_Num] == CLOSE)
+      {
+        FeedBack = Control_Station(St_Num, CLOSE); //Close Current Station
+        if (FeedBack == 1)
+        {
+          PrevStStatus[St_Num] = CurrentStStatus[St_Num];
+          FeedBack = Reset;
+        }//FeedBack if
+      }
+    }
   }//For loop on station
 }// end of code.
