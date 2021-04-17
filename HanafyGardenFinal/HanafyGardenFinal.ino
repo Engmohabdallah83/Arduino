@@ -230,13 +230,21 @@ void WLCD_LED_Start(void)
 /////////////////////////////////////////////////////////////////////////////////
 void WLCD_Massages( uint8_t u8LocMsg )
 {
-  switch (u8LocMsg)
+   uint8_t RealMsg = u8LocMsg %10;//Operation case for station whether(Config update, Open, Close)
+   
+  switch (RealMsg)
   {
     case Cfg_Update :
-      break;
+        RealMsg = RealMsg/10;//station Number
+        
+       break;
+        
     case St_Open :
+        
       break;
+        
     case St_Close :
+        
       break;
   }
 
