@@ -26,8 +26,8 @@
 
 /* Blynk Library*/
 #include <BlynkSimpleEsp8266.h>
+#include <TimeLib.h>
 #include <WidgetRTC.h>
-//#include <TimeLib.h>
 /************************************************************************************
                                       TODO
  ************************************************************************************/
@@ -136,7 +136,7 @@ uint8_t  DOW_Cntr = 0;
 
 uint8_t MenuStationSelect = 0 ;
 
-uint8_t BlynkFlag = LOW;
+bool BlynkFlag = LOW;
 
 uint8_t StDataAdressCtr = 0;
 
@@ -228,27 +228,19 @@ void WLCD_LED_Start(void)
 /////////////////////////////////////////////////////////////////////////////////
 //                                WLCD_Massages                                //
 /////////////////////////////////////////////////////////////////////////////////
-void WLCD_Massages( uint8_t u8LocMsg )
-{
-   uint8_t RealMsg = u8LocMsg %10;//Operation case for station whether(Config update, Open, Close)
-   
-  switch (RealMsg)
-  {
-    case Cfg_Update :
-        RealMsg = RealMsg/10;//station Number
-        
-       break;
-        
-    case St_Open :
-        
-      break;
-        
-    case St_Close :
-        
-      break;
-  }
-
-}
+//void WLCD_Massages( uint8_t u8LocMsg )
+//{
+//  switch (u8LocMsg)
+//  {
+//    case Cfg_Update :
+//      break;
+//    case St_Open :
+//      break;
+//    case St_Close :
+//      break;
+//  }
+//
+//}
 /************************** END WIDGET Display Function ************************/
 
 /////////////////////////////////////////////////
@@ -598,7 +590,7 @@ void Basic_Display()
   for (uint8_t StCount = 0; StCount < MaxStation; StCount++)
   {
     //Close all station to return to default status
-    CloseStation(StCount);
+    CloseStation( (StCount+1) );
     CurrentStStatus[StCount] = PrevStStatus[StCount] = CLOSE; //Reset Run Times flag in order to redisplay
   }
 
@@ -620,7 +612,7 @@ void Config_Display(uint8_t u8Config_Step)
       display.setCursor(0, 0);
       display.print("Enter Number");
       display.println("of Station:");
-      display.println("Max 4 St.:");
+      display.println("(Max 4 St)");
       display.setCursor(40, 24);
       display.print("Station");
       display.display();
@@ -634,7 +626,7 @@ void Config_Display(uint8_t u8Config_Step)
       display.print("Enter Station ");
       display.printf("%u", x + 1);
       display.println(" Run Period:");
-      display.println("Max 59 min:");
+      display.println("(Max 59 min)");
       display.setCursor(40, 24);
       display.print("min");
       display.display();
@@ -645,9 +637,9 @@ void Config_Display(uint8_t u8Config_Step)
         Run Period displayed*/
       display.clearDisplay();   // clear the screen and buffer
       display.setCursor(0, 0);
-      display.print("Watering Per");
-      display.println("Day:");
-      display.println("Max 5 Times.");
+      display.print("Frequency ");
+      display.println("Per Day:");
+      display.println("(Max 5 Times)");
       display.display();
       break;
     case RUNTIME1:
@@ -657,6 +649,7 @@ void Config_Display(uint8_t u8Config_Step)
       display.clearDisplay();   // clear the screen and buffer
       display.setCursor(0, 0);
       display.print("Enter Start");
+      display.setCursor(0, 8);
       display.println("of Time1:");
       display.display();
       break;
@@ -667,6 +660,7 @@ void Config_Display(uint8_t u8Config_Step)
       display.clearDisplay();   // clear the screen and buffer
       display.setCursor(0, 0);
       display.print("Enter Start");
+      display.setCursor(0, 8);
       display.println("of Time2:");
       display.display();
       break;
@@ -677,6 +671,7 @@ void Config_Display(uint8_t u8Config_Step)
       display.clearDisplay();   // clear the screen and buffer
       display.setCursor(0, 0);
       display.print("Enter Start");
+      display.setCursor(0, 8);
       display.println("of Time3:");
       display.display();
       break;
@@ -687,6 +682,7 @@ void Config_Display(uint8_t u8Config_Step)
       display.clearDisplay();   // clear the screen and buffer
       display.setCursor(0, 0);
       display.print("Enter Start");
+      display.setCursor(0, 8);
       display.println("of Time4:");
       display.display();
       break;
@@ -697,6 +693,7 @@ void Config_Display(uint8_t u8Config_Step)
       display.clearDisplay();   // clear the screen and buffer
       display.setCursor(0, 0);
       display.print("Enter Start");
+      display.setCursor(0, 8);
       display.println("of Time5:");
       display.display();
       break;
@@ -1221,6 +1218,8 @@ void setup(void)
   pinMode(button2, INPUT);  //Increment
   pinMode(button3, INPUT);  //Exit
 
+  
+
 //Nokia 5110 LCD initialization
   // initialize the display
   display.begin();
@@ -1240,8 +1239,17 @@ void setup(void)
   rtc.begin();         // initialize RTC chip
 
   WiFi.begin((char*)ssid, (char*)pass); // Connection to a wifi network
+  
+  delay(4000u);//delay for connection Trial
+  
   Blynk.config(auth); // Connection to Blynk servers, 5 seconds timeout
   
+  BlynkFlag = Blynk.connect();
+    
+  //continue trying to connect to Blynk server. Returns true when connected,
+  //false if timeout have been reached. Default timeout is 30 seconds.
+  //while ( !(Blynk.connect()) ;
+
   // initialize EEPROM with predefined size
   EEPROM.begin(EEPROM_SIZE);
 
@@ -1251,13 +1259,9 @@ void setup(void)
   // Debug console
   //Serial.begin(9600);
 
-  delay(2000u);//delay for connection Trial
-
-  //continue trying to connect to Blynk server. Returns true when connected,
-  //false if timeout have been reached. Default timeout is 30 seconds.
-  while ( !(Blynk.connect(8000U)) );
-
-  if ( Blynk.connected() )
+  //delay(5000u);//delay for connection Trial
+  
+  if ( ( Blynk.connected() ) || (BlynkFlag == HIGH) )
   {
     setSyncInterval(10 * 60); // Sync interval in seconds (10 minutes)
     WLCD_LED_Start();
@@ -1406,7 +1410,6 @@ void loop()
         }
       }
     }
-
     if ( CurrentStStatus[St_Num] != PrevStStatus[St_Num] )
     {
       if (CurrentStStatus[St_Num] == OPEN)
